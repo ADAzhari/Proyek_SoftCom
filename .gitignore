@@ -1,0 +1,10 @@
+
+models/
+*.pkl
+*.h5
+*.pt
+*.onnx
+__pycache__/
+*.pyc
+.env
+data/raw/
