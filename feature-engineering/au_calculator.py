@@ -1,6 +1,6 @@
 # feature_engineering/au_calculator.py
 import numpy as np
-
+from collections import deque
 # Index landmark MediaPipe yang relevan
 # Referensi: https://mediapipe.dev/images/mobile/face_mesh_full_res.jpg
 LANDMARKS = {
@@ -88,3 +88,27 @@ def compute_au_vector(landmarks):
         "EAR_right": right_ear,
         "BROW":      brow,      # proxy AU1/AU4
     }
+
+class PERCLOSCalculator:
+    """
+    PERCLOS = Percentage of Eye Closure
+    = jumlah frame mata tertutup / total frame dalam window
+    Mata dianggap "tertutup" kalau EAR < threshold
+    """
+    def __init__(self, window_seconds=60, fps=30, ear_threshold=0.2):
+        self.window_size   = window_seconds * fps
+        self.ear_threshold = ear_threshold
+        self.ear_history   = deque(maxlen=self.window_size)
+
+    def update(self, ear_value):
+        self.ear_history.append(ear_value)
+
+    def compute(self):
+        if len(self.ear_history) < 10:  # belum cukup data
+            return 0.0
+
+        closed_frames = sum(
+            1 for ear in self.ear_history
+            if ear < self.ear_threshold
+        )
+        return closed_frames / len(self.ear_history)  # 0.0 - 1.0
