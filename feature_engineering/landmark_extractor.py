@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 
 import mediapipe as mp
-mp_face_mesh = mp.solutions.face_mesh
+from mediapipe.python.solutions import face_mesh as mp_face_mesh
 
 class LandmarkExtractor:
     def __init__(self):
