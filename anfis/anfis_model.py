@@ -5,10 +5,10 @@ from anfis.membership import FuzzyVariable
 class ANFIS:
     """
     Adaptive Neuro-Fuzzy Inference System
-    
-    Input  : 5 fitur [EAR, EAR_asym, PERCLOS, BROW, PITCH]
-    Output : Fatigue Score (0-100)
-    
+
+    Input  : 5 fitur [EAR, EAR_asym, MAR, BROW, PITCH]
+    Output : Drowsiness score (0-1), threshold 0.5 untuk klasifikasi
+
     Arsitektur 5 layer:
     L1 - Fuzzifikasi
     L2 - Rule firing (product operator)
@@ -17,22 +17,22 @@ class ANFIS:
     L5 - Output agregasi
     """
 
-    def __init__(self, n_mf=3):
+    def __init__(self, n_mf=2):
         self.n_mf = n_mf
 
-        # definisi variabel input + range nilainya
+        # Semua input sudah di-MinMaxScale ke [0, 1] sebelum masuk ANFIS
         self.variables = [
-            FuzzyVariable("EAR",      n_mf, 0.10, 0.40),
-            FuzzyVariable("EAR_asym", n_mf, 0.00, 0.20),
-            FuzzyVariable("PERCLOS",  n_mf, 0.00, 1.00),
-            FuzzyVariable("BROW",     n_mf, 0.00, 1.00),
-            FuzzyVariable("PITCH",    n_mf, -30,  30.00),
+            FuzzyVariable("EAR",      n_mf, 0.0, 1.0),
+            FuzzyVariable("EAR_asym", n_mf, 0.0, 1.0),
+            FuzzyVariable("MAR",      n_mf, 0.0, 1.0),
+            FuzzyVariable("BROW",     n_mf, 0.0, 1.0),
+            FuzzyVariable("PITCH",    n_mf, 0.0, 1.0),
         ]
 
         self.n_inputs = len(self.variables)
 
         # generate semua kombinasi rule
-        # 5 input × 3 MF = 3^5 = 243 rules
+        # 5 input × 2 MF = 2^5 = 32 rules
         self.rules = list(product(range(n_mf), repeat=self.n_inputs))
         self.n_rules = len(self.rules)
 
@@ -85,7 +85,7 @@ class ANFIS:
 
     def layer5_output(self, wf):
         """
-        Agregasi output akhir → Fatigue Score mentah
+        Agregasi output akhir → Drowsiness score mentah
         """
         return wf.sum()
 
@@ -93,7 +93,7 @@ class ANFIS:
         """
         Full forward pass
         Input  : x shape (n_inputs,)
-        Output : fatigue score (float)
+        Output : drowsiness score (float, 0-1)
         """
         mu_list = self.layer1_fuzzify(x)
         w       = self.layer2_fire_rules(mu_list)
@@ -101,8 +101,8 @@ class ANFIS:
         wf      = self.layer4_consequent(w_norm, x)
         output  = self.layer5_output(wf)
 
-        # clamp ke range 0-100
-        return float(np.clip(output, 0, 100))
+        # clamp ke range 0-1
+        return float(np.clip(output, 0, 1))
 
     def predict(self, X):
         """

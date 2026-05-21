@@ -127,24 +127,9 @@ for cls in classes:
             }
         )
 
-df_raw = pd.DataFrame(records)
-
-# --- STRATEGI 2: FILTER DATASET (Strict Frame Selection) ---
-# Dataset asli memberi label "Drowsy" pada semua frame dalam video mengantuk,
-# padahal mata tidak selalu tertutup. Ini membingungkan ANFIS.
-# Kita filter agar ANFIS hanya belajar dari sinyal fisik yang jelas.
-
-# Normal: Ambil frame yang matanya benar-benar terbuka (EAR > 0.25)
-normal_mask = (df_raw["label"] == 0) & (df_raw["EAR"] > 0.25)
-
-# Drowsy: Ambil frame di mana mata mulai menutup (EAR < 0.22) ATAU sedang menguap (MAR > 0.01)
-drowsy_mask = (df_raw["label"] == 1) & ((df_raw["EAR"] < 0.22) | (df_raw["MAR"] > 0.01))
-
-df = df_raw[normal_mask | drowsy_mask].copy()
-
-print(f"\nTotal sampel sebelum filter: {len(df_raw)}")
-print(f"Total sampel setelah filter: {len(df)}")
-print(f"Distribusi label (setelah filter):\n{df['label'].value_counts()}")
+df = pd.DataFrame(records)
+print(f"\nTotal sampel berhasil diekstrak: {len(df)}")
+print(f"Distribusi label:\n{df['label'].value_counts()}")
 print(df.head())
 
 # ─── 6. Visualisasi distribusi fitur ──────────────────────────────────────────

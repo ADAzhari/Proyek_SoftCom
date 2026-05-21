@@ -4,103 +4,92 @@ from anfis.anfis_model import ANFIS
 
 class ANFISTrainer:
     """
-    Training ANFIS dengan hybrid learning:
-    - Consequent params → Least Squares Estimation (LSE)
-    - Premise params (mean/sigma MF) → Gradient Descent
+    Training ANFIS dengan pure Gradient Descent.
+    Update semua parameter (premise MF + consequent) via backpropagation.
     """
 
     def __init__(self, model: ANFIS, lr=0.01):
         self.model = model
         self.lr    = lr
 
-    def _build_phi(self, X):
+    def _train_step(self, x, target):
         """
-        Bangun matrix phi untuk LSE consequent update
-        shape: (n_samples, n_rules * (n_inputs + 1))
+        Satu langkah forward + backward untuk satu sampel.
+        Return: squared error
         """
-        n_samples = X.shape[0]
-        n_cols    = self.model.n_rules * (self.model.n_inputs + 1)
-        phi       = np.zeros((n_samples, n_cols))
+        # --- Forward ---
+        mu_list = self.model.layer1_fuzzify(x)
+        w       = self.model.layer2_fire_rules(mu_list)
+        w_sum   = w.sum() + 1e-8
+        w_norm  = w / w_sum
+        x_aug   = np.append(x, 1.0)
+        f_rules = self.model.consequents @ x_aug       # (n_rules,)
+        output  = np.sum(w_norm * f_rules)
+        output_clipped = np.clip(output, 0, 1)
+        error   = output_clipped - target
 
-        for i, x in enumerate(X):
-            mu_list = self.model.layer1_fuzzify(x)
-            w       = self.model.layer2_fire_rules(mu_list)
-            w_norm  = self.model.layer3_normalize(w)
-            x_aug   = np.append(x, 1.0)
+        # Skip jika gradient = 0 karena clipping
+        if (output <= 0 and error < 0) or (output >= 1 and error > 0):
+            return error ** 2
 
-            for r in range(self.model.n_rules):
-                start = r * (self.model.n_inputs + 1)
-                end   = start + (self.model.n_inputs + 1)
-                phi[i, start:end] = w_norm[r] * x_aug
+        # --- Backward: update consequent params (GD) ---
+        # dL/d_p[r,j] = error * w_norm[r] * x_aug[j]
+        grad_consequents = error * np.outer(w_norm, x_aug)
+        self.model.consequents -= self.lr * grad_consequents
 
-        return phi
+        # --- Backward: update premise params (MF mean & sigma) ---
+        for j, var in enumerate(self.model.variables):
+            xj    = x[j]
+            mu_jk = mu_list[j]  # shape (n_mf,)
 
-    def update_consequents_lse(self, X, y):
-        """
-        Least Squares: theta = (phi^T phi)^-1 phi^T y
-        """
-        phi   = self._build_phi(X)
-        theta, _, _, _ = np.linalg.lstsq(phi, y, rcond=None)
-        self.model.consequents = theta.reshape(
-            self.model.n_rules, self.model.n_inputs + 1
-        )
+            for k in range(self.model.n_mf):
+                # dOutput/dmu_jk melalui semua rule yang pakai MF k di input j
+                d_output_d_mu = 0.0
 
-    def update_premises_gd(self, X, y):
-        """
-        Gradient descent update untuk mean & sigma MF
-        """
-        for x, target in zip(X, y):
-            output  = self.model.forward(x)
-            error   = output - target
+                for r, rule in enumerate(self.rules_cache):
+                    if rule[j] != k:
+                        continue
 
-            mu_list = self.model.layer1_fuzzify(x)
-            w       = self.model.layer2_fire_rules(mu_list)
-            w_norm  = self.model.layer3_normalize(w)
-            x_aug   = np.append(x, 1.0)
+                    # dOutput/dw_r = (f_r - output) / w_sum
+                    d_out_d_wr = (f_rules[r] - output) / w_sum
 
-            f_rules = self.model.consequents @ x_aug
-            w_sum   = w.sum() + 1e-8
+                    # dw_r/dmu_jk = w_r / mu_jk
+                    if mu_jk[k] > 1e-10:
+                        d_wr_d_mu = w[r] / mu_jk[k]
+                    else:
+                        d_wr_d_mu = 0.0
 
-            for j, var in enumerate(self.model.variables):
-                d_means  = np.zeros(self.model.n_mf)
-                d_sigmas = np.zeros(self.model.n_mf)
+                    d_output_d_mu += d_out_d_wr * d_wr_d_mu
 
-                for k in range(self.model.n_mf):
-                    d_output_d_wk = 0.0
-                    for r, rule in enumerate(self.model.rules):
-                        if rule[j] == k:
-                            # chain rule melalui normalisasi
-                            d_wnorm_d_wk = (w_sum - w[r]) / (w_sum ** 2)
-                            d_output_d_wk += f_rules[r] * d_wnorm_d_wk
+                # Chain rule ke MF params
+                mf = var.mfs[k]
+                grad_mean  = error * d_output_d_mu * mf.grad_mean(xj)
+                grad_sigma = error * d_output_d_mu * mf.grad_sigma(xj)
 
-                    mf = var.mfs[k]
-                    xj = x[j]
-                    d_means[k]  = error * d_output_d_wk * mf.grad_mean(xj)
-                    d_sigmas[k] = error * d_output_d_wk * mf.grad_sigma(xj)
+                mf.mean  -= self.lr * grad_mean
+                mf.sigma  = max(mf.sigma - self.lr * grad_sigma, 1e-4)
 
-                means, sigmas = var.get_params()
-                means  -= self.lr * d_means
-                sigmas -= self.lr * d_sigmas
-                sigmas  = np.maximum(sigmas, 1e-4)  # sigma tidak boleh negatif
-                var.set_params(means, sigmas)
+        return error ** 2
 
     def train(self, X, y, epochs=50, verbose=True):
         """
-        Hybrid learning loop
+        Pure gradient descent training loop.
         """
+        # Cache rules list untuk akses cepat
+        self.rules_cache = self.model.rules
+
         history = []
+        n = len(X)
 
         for epoch in range(epochs):
-            # Step 1: update consequents dengan LSE (forward pass)
-            self.update_consequents_lse(X, y)
+            # Shuffle data tiap epoch
+            indices = np.random.permutation(n)
+            total_loss = 0.0
 
-            # Step 2: update premises dengan GD (backward pass)
-            self.update_premises_gd(X, y)
+            for idx in indices:
+                total_loss += self._train_step(X[idx], y[idx])
 
-            # hitung loss
-            y_pred = self.model.predict(X)
-            mse    = np.mean((y_pred - y) ** 2)
-            rmse   = np.sqrt(mse)
+            rmse = np.sqrt(total_loss / n)
             history.append(rmse)
 
             if verbose and (epoch + 1) % 10 == 0:

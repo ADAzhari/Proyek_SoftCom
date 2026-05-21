@@ -24,6 +24,12 @@ LANDMARKS = {
     "right_brow_inner": 336,
     "right_brow_outer": 300,
 
+    # Mulut
+    "mouth_top":    13,
+    "mouth_bottom": 14,
+    "mouth_left":   61,
+    "mouth_right":  291,
+
     # Hidung (referensi jarak)
     "nose_tip": 4,
 }
@@ -49,6 +55,22 @@ def eye_aspect_ratio(landmarks, side="left"):
 
     ear = vertical / (horizontal + 1e-6)  # hindari division by zero
     return ear
+
+def mouth_aspect_ratio(landmarks):
+    """
+    MAR = vertical / horizontal
+    Nilai tinggi → mulut terbuka → menguap → tanda mengantuk
+    Nilai rendah → mulut tertutup → normal
+    """
+    top    = landmarks[LANDMARKS["mouth_top"]][:2]
+    bottom = landmarks[LANDMARKS["mouth_bottom"]][:2]
+    left   = landmarks[LANDMARKS["mouth_left"]][:2]
+    right  = landmarks[LANDMARKS["mouth_right"]][:2]
+
+    vertical   = np.linalg.norm(top - bottom)
+    horizontal = np.linalg.norm(left - right)
+
+    return vertical / (horizontal + 1e-6)
 
 def brow_raise(landmarks, face_height):
     """
@@ -81,11 +103,13 @@ def compute_au_vector(landmarks):
     avg_ear   = (left_ear + right_ear) / 2
 
     brow      = brow_raise(landmarks, face_height)
+    mar       = mouth_aspect_ratio(landmarks)
 
     return {
         "EAR":       avg_ear,   # proxy AU43/AU45 — utama
         "EAR_left":  left_ear,  # asimetri mata (tanda fatigue)
         "EAR_right": right_ear,
+        "MAR":       mar,       # proxy AU25/AU26/AU27 — menguap
         "BROW":      brow,      # proxy AU1/AU4
     }
 
